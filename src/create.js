@@ -532,8 +532,11 @@ async function main() {
             },
             name: ({ results }) => {
               const reservedNames = ["annotation-xml", "color-profile", "font-face", "font-face-src", "font-face-uri", "font-face-format", "font-face-name", "missing-glyph"];
-
-              if (!commandRun.arguments.action) {
+              if (!commandRun.arguments.action && !commandRun.options.name) {
+                if (commandRun.options.auto || commandRun.options.skip || !commandRun.options.i) {
+                  program.error(color.red("Name is required when running non-interactively. Pass --name <value>."));
+                  process.exit(1);
+                }
                 let placeholder = "mysite";
                 let message = "Site name:";
                 if (commandRun.command === "webcomponent" || results.type === "webcomponent") {
@@ -588,8 +591,8 @@ async function main() {
                   }
                 });  
               }
-              if (commandRun.arguments.action) {
-                let value = commandRun.arguments.action;
+              if (commandRun.arguments.action || commandRun.options.name) {
+                let value = commandRun.arguments.action || commandRun.options.name;
                 if (!value) {
                   program.error(color.red("Name is required (tab writes default)"));
                   process.exit(1);
@@ -688,7 +691,7 @@ async function main() {
               if (results.theme === "custom-theme") {
                 let tmpCustomName = await p.text({
                   message: 'Theme Name:',
-                  placeholder: `custom-${commandRun.arguments.action ? commandRun.arguments.action : results.name}-theme`,
+                  placeholder: `custom-${commandRun.arguments.action ? commandRun.arguments.action : (results.name ? results.name : commandRun.options.name)}-theme`,
                   required: false,
                   validate: (value) => {
                     if (!value) {
@@ -712,7 +715,7 @@ async function main() {
               }
               else if (results.type === "site") {
                 // need to validate theme from CLI arguments
-                let value = `${commandRun.options.customThemeName ? commandRun.options.customThemeName : (results.name ? results.name : commandRun.arguments.action)}`;
+                let value = `${commandRun.options.customThemeName ? commandRun.options.customThemeName : (results.name ? results.name : (commandRun.arguments.action ? commandRun.arguments.action : commandRun.options.name))}`;
                 if (!value) {
                   program.error(color.red("Theme name is required (tab writes default)"));
                 }
