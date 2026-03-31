@@ -11,8 +11,8 @@ import { merlinSays } from "../statements.js";
 import { log } from "../logging.js";
 
 import { dashToCamel, readAllFiles, exec } from '../utils.js';
-import * as hax from "@haxtheweb/haxcms-nodejs";
-const HAXCMS = hax.HAXCMS;
+import * as haxcmsLib from "@haxtheweb/haxcms-nodejs/dist/lib/HAXCMS.js";
+const HAXCMS = haxcmsLib.HAXCMS;
 
 let sysGit = true;
 exec('which git', error => {

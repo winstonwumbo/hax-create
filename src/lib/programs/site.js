@@ -8,6 +8,7 @@ import * as ejs from "ejs";
 import color from 'picocolors';
 import { dump, load } from 'js-yaml';
 import * as winston from 'winston';
+import Twig from 'twig';
 
 import { parse } from 'node-html-parser';
 import { merlinSays, communityStatement } from "../statements.js";
@@ -21,12 +22,13 @@ globalThis.MicroFrontendRegistryConfig = {
 import { MicroFrontendRegistry } from "../micro-frontend-registry.js";
 // emable HAXcms routes so we have name => path just like on frontend!
 MicroFrontendRegistry.enableServices(['core', 'haxcms', 'experimental']);
-
-import * as haxcmsNodejsCli from "@haxtheweb/haxcms-nodejs/dist/cli.js";
-import * as hax from "@haxtheweb/haxcms-nodejs";
+import * as haxcmsLib from "@haxtheweb/haxcms-nodejs/dist/lib/HAXCMS.js";
+import createSiteRoute from "@haxtheweb/haxcms-nodejs/dist/routes/createSite.js";
+import listFilesRoute from "@haxtheweb/haxcms-nodejs/dist/routes/listFiles.js";
 import * as josfile from "@haxtheweb/haxcms-nodejs/dist/lib/JSONOutlineSchema.js";
 const JSONOutlineSchema = josfile.default;
-const HAXCMS = hax.HAXCMS;
+const HAXCMS = haxcmsLib.HAXCMS;
+const systemStructureContext = haxcmsLib.systemStructureContext;
 
 
 var sysSurge = true;
@@ -61,6 +63,39 @@ const siteRecipeFile = 'create-cli.recipe';
 const siteLoggingName = 'cli';
 const logLevels = {};
 logLevels[siteLoggingName] = 0;
+let twigConstantFunctionRegistered = false;
+let haxcmsNodejsCli = null;
+
+function ensureTwigConstantFunction() {
+  if (twigConstantFunctionRegistered) {
+    return;
+  }
+  twigConstantFunctionRegistered = true;
+  try {
+    if (Twig && typeof Twig.extendFunction === 'function') {
+      Twig.extendFunction('constant', function constantLookup(name) {
+        if (typeof name !== 'string') {
+          return null;
+        }
+        if (Object.prototype.hasOwnProperty.call(process.env, name)) {
+          return process.env[name];
+        }
+        if (typeof globalThis[name] !== 'undefined') {
+          return globalThis[name];
+        }
+        return null;
+      });
+    }
+  } catch (e) {
+  }
+}
+
+async function getHaxcmsNodejsCli() {
+  if (!haxcmsNodejsCli) {
+    haxcmsNodejsCli = await import("@haxtheweb/haxcms-nodejs/dist/cli.js");
+  }
+  return haxcmsNodejsCli;
+}
 
 // fake response class so we can capture the response from the headless route as opposed to print to console
 // this way we can handle as data or if use is requesting output format to change we can respond
@@ -82,9 +117,26 @@ class Res {
     this.data = JSON.parse(JSON.stringify(data));
     return this;
   }
+  sendStatus(status) {
+    this.statusCode = status;
+    this.data = status;
+    return this;
+  }
   setHeader() {
     return this;
   }
+}
+
+async function invokeRoute(routeHandler, body = {}, query = {}) {
+  let res = new Res();
+  await routeHandler(
+    {
+      body: body,
+      query: query,
+    },
+    res
+  );
+  return res;
 }
 
 
@@ -120,7 +172,7 @@ export function siteActions() {
 }
 
 export async function siteCommandDetected(commandRun) {
-    var activeHaxsite = await hax.systemStructureContext();
+    var activeHaxsite = await systemStructureContext();
     const recipeFileName = path.join(process.cwd(), siteRecipeFile);
     const recipeLogTransport = new winston.transports.File({
       filename: recipeFileName
@@ -166,7 +218,7 @@ export async function siteCommandDetected(commandRun) {
           options: {}
         }
         // ensures data is updated and stateful per action
-        activeHaxsite = await hax.systemStructureContext();
+        activeHaxsite = await systemStructureContext();
         operation = await p.group(
           {
             action: ({ results }) =>
@@ -554,7 +606,8 @@ export async function siteCommandDetected(commandRun) {
               }
               createNodeBody.node.contents = locationContent;
             }
-            let resp = await haxcmsNodejsCli.cliBridge('createNode', createNodeBody);
+            const cliBridge = await getHaxcmsNodejsCli();
+            let resp = await cliBridge.cliBridge('createNode', createNodeBody);
             recipe.log(siteLoggingName, commandString(commandRun));
             if (commandRun.options.v) {
               log(resp.res.data, 'silly');
@@ -734,7 +787,8 @@ export async function siteCommandDetected(commandRun) {
               }
               // extra confirmation given destructive operation
               if (del) {
-                let resp = await haxcmsNodejsCli.cliBridge('deleteNode', { site: activeHaxsite, node: { id: commandRun.options.itemId }});
+                const cliBridge = await getHaxcmsNodejsCli();
+                let resp = await cliBridge.cliBridge('deleteNode', { site: activeHaxsite, node: { id: commandRun.options.itemId }});
                 if (resp.res.data === 500) {
                   console.warn(`node:delete failed "${commandRun.options.itemId} not found`);
                 }
@@ -904,7 +958,7 @@ export async function siteCommandDetected(commandRun) {
         case "site:theme":
           try {
             //theme
-            activeHaxsite = await hax.systemStructureContext();
+            activeHaxsite = await systemStructureContext();
             let list = await siteThemeList(true, activeHaxsite.directory);
 
             let val = activeHaxsite.manifest.metadata.theme.element;
@@ -992,7 +1046,7 @@ export async function siteCommandDetected(commandRun) {
         case "site:element":
           try {
             const reservedNames = ["annotation-xml", "color-profile", "font-face", "font-face-src", "font-face-uri", "font-face-format", "font-face-name", "missing-glyph"];
-            activeHaxsite = await hax.systemStructureContext();
+            activeHaxsite = await systemStructureContext();
 
             if(!commandRun.options.name){
               commandRun.options.name = await p.text({
@@ -1317,8 +1371,16 @@ export async function siteCommandDetected(commandRun) {
           }
         break;
         case "site:file-list":
-          let res = new Res();
-          await hax.RoutesMap.get.listFiles({query: activeHaxsite.name, filename: commandRun.options.filename}, res);
+          let res = await invokeRoute(
+            listFilesRoute,
+            {},
+            {
+              siteName: activeHaxsite.name,
+              filename: commandRun.options.filename,
+              user_token: "fakeToken",
+              site_token: "fakeToken"
+            }
+          );
           if (commandRun.options.format === 'yaml') {
             log(dump(res.data));
           }
@@ -1330,7 +1392,7 @@ export async function siteCommandDetected(commandRun) {
         case "site:md":
         case "site:schema":
           let siteContent = '';
-          activeHaxsite = await hax.systemStructureContext();
+          activeHaxsite = await systemStructureContext();
           let items = [];
           if (commandRun.options.itemId != null) {
             items = activeHaxsite.manifest.findBranch(commandRun.options.itemId);
@@ -1460,7 +1522,7 @@ export async function siteCommandDetected(commandRun) {
                   // but ensure we don't have a site context prior to running this
                   // or we'll get a site in a site with the same name which is not
                   // the desired result
-                  else if (!await hax.systemStructureContext()) {
+                  else if (!await systemStructureContext()) {
                     await exec(`${commandList[i]} --y --no-i --auto --quiet --no-extras`);
                     // site will have been created, obtain the site name and set root so
                     // the other commands get piped into it correctly
@@ -1713,17 +1775,14 @@ export async function siteProcess(commandRun, project, port = '3000') {    // au
     }
   }
   HAXCMS.cliWritePath = `${project.path}`;
-  let res = new Res();
-  // unfortunately the twig exception is not blockable from output at this layer
-  await hax.RoutesMap.post.createSite(
+  ensureTwigConstantFunction();
+  let res = await invokeRoute(
+    createSiteRoute,
+    siteRequest,
     {
-      body: siteRequest,
-      query: {
-        user_token: "fakeToken",
-        site_token: "fakeToken"
-      },
-    },
-    res
+      user_token: "fakeToken",
+      site_token: "fakeToken"
+    }
   );
   // so we run it and then clear the screen
   // this is a bit of a hack but it works to give the user the feedback that the site was
@@ -1967,7 +2026,7 @@ async function customSiteTheme(commandRun, project) {
   
   // import theme to custom.js
   await fs.appendFileSync(`${sitePath}/custom/src/custom.js`, `\n import "./${project.customThemeName}.js";`);
-  var activeHaxsite = await hax.systemStructureContext(sitePath);
+  var activeHaxsite = await systemStructureContext(sitePath);
 
   // add theme to site.json
   let themeObj = {

@@ -14,8 +14,9 @@ import { partyCommandDetected } from './lib/programs/party.js';
 import { webcomponentProcess, webcomponentCommandDetected, webcomponentActions } from "./lib/programs/webcomponent.js";
 import { siteActions, siteNodeOperations, siteProcess, siteCommandDetected, siteThemeList } from "./lib/programs/site.js";
 import { camelToDash, exec, interactiveExec, writeConfigFile, readConfigFile, getTimeDifference } from "./lib/utils.js";
-import * as hax from "@haxtheweb/haxcms-nodejs";
-const HAXCMS = hax.HAXCMS;
+import * as haxcmsLib from "@haxtheweb/haxcms-nodejs/dist/lib/HAXCMS.js";
+const HAXCMS = haxcmsLib.HAXCMS;
+const systemStructureContext = haxcmsLib.systemStructureContext;
 
 // check the last time this was run
 let lastTime = readConfigFile('hax-cli-last-run');
@@ -380,7 +381,7 @@ async function main() {
   else if (commandRun.command === 'audit') {
     let customPath = null;
     // test for haxcms context
-    if (await hax.systemStructureContext() && fs.existsSync(`${process.cwd()}/custom`)) { 
+    if (await systemStructureContext() && fs.existsSync(`${process.cwd()}/custom`)) { 
       customPath = path.join(process.cwd(), 'custom');
     }
     auditCommandDetected(commandRun, customPath)
@@ -390,7 +391,7 @@ async function main() {
     await partyCommandDetected(commandRun);
   }
   // CLI works within context of the site if one is detected, otherwise we can do other things
-  else if (await hax.systemStructureContext()) {
+  else if (await systemStructureContext()) {
     if (commandRun.command === 'serve'){
       commandRun.program = 'serve';
       commandRun.options.skip = true;
